@@ -1,4 +1,4 @@
-const { SlashCommandBuilder, EmbedBuilder } = require('discord.js');
+const { SlashCommandBuilder, EmbedBuilder, PermissionFlagsBits } = require('discord.js');
 const cron = require('node-cron');
 const moment = require('moment-timezone');
 const db = require('../database');
@@ -287,11 +287,11 @@ module.exports = {
     .addSubcommand(subcommand =>
       subcommand
         .setName('test')
-        .setDescription('Stvara test anketu u trenutnom kanalu (traje 1 minutu)'))
+        .setDescription('Stvara test anketu u trenutnom kanalu (traje 1 minutu) (samo za admine)'))
     .addSubcommand(subcommand =>
       subcommand
         .setName('end')
-        .setDescription('Završava aktivnu anketu u trenutnom kanalu')),
+        .setDescription('Završava aktivnu anketu u trenutnom kanalu (samo za admine)')),
 
   init: (client) => {
     console.log('[debug] inicijalizacija anketa naredbe i zakazivanje cron posla...');
@@ -319,6 +319,14 @@ module.exports = {
 
   async execute(interaction) {
     const subcommand = interaction.options.getSubcommand();
+
+    // provjera administratorskih dozvola za test i end naredbe
+    if ((subcommand === 'test' || subcommand === 'end') && !interaction.member.permissions.has(PermissionFlagsBits.Administrator)) {
+      return interaction.reply({ 
+        content: 'Nemate dozvolu za korištenje ove naredbe. Potrebna je administratorska dozvola.',
+        ephemeral: true 
+      });
+    }
 
     if (subcommand === 'test') {
       try {

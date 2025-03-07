@@ -505,7 +505,6 @@ module.exports = {
   data: new SlashCommandBuilder()
     .setName('storage')
     .setDescription('Upravljanje datotekama')
-    .setDefaultMemberPermissions(PermissionFlagsBits.SendMessages)
     .addSubcommand(subcommand =>
       subcommand
         .setName('upload')
@@ -564,6 +563,14 @@ module.exports = {
 
   async execute(interaction) {
     const subcommand = interaction.options.getSubcommand();
+    
+    // provjeri ima li korisnik administratorske dozvole za setstorage
+    if (subcommand === 'setstorage' && !interaction.member.permissions.has(PermissionFlagsBits.Administrator)) {
+      return interaction.reply({ 
+        content: 'nemate dozvolu za korištenje ove naredbe. potrebna je administratorska dozvola.',
+        ephemeral: true 
+      });
+    }
     
     try {
       // za naredbe osim setstorage, provjeri je li kanal za pohranu postavljen
