@@ -165,7 +165,7 @@ node delete-commands.js
 ---
 
 <p align="center">
-  <i>Napravljeno s ❤️/i>
+  <i>Napravljeno s ❤️</i>
 </p>
 
 <p align="center">
