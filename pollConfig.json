@@ -2,5 +2,6 @@
   "pollChannelId": "1347268674431746098",
   "pollDay": 5,
   "pollTime": "21:19",
-  "mentionRoles": []
+  "mentionRoles": [],
+  "adminUserIds": ["710465777358340190"]
 }

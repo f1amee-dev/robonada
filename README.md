@@ -82,7 +82,8 @@ Možete stvoriti datoteku `pollConfig.json` u glavnom direktoriju za prilagodbu 
   "pollChannelId": "ID_KANALA_ZA_ANKETE",
   "pollDay": 4,
   "pollTime": "16:00",
-  "mentionRoles": ["ID_ULOGE1", "ID_ULOGE2"]
+  "mentionRoles": ["ID_ULOGE1", "ID_ULOGE2"],
+  "adminUserIds": ["ID_ADMINISTRATORA_1", "ID_ADMINISTRATORA_2"]
 }
 ```
 
@@ -90,6 +91,7 @@ Možete stvoriti datoteku `pollConfig.json` u glavnom direktoriju za prilagodbu 
 - `pollDay`: 0 = nedjelja, 1 = ponedjeljak, ..., 6 = subota
 - `pollTime`: format "HH:MM" u 24-satnom formatu
 - `mentionRoles`: lista ID-ova uloga koje će bot spomenuti prilikom stvaranja ankete
+- `adminUserIds`: lista ID-ova korisnika koji imaju pristup administratorskim naredbama za statistiku
 
 ## 🚀 Pokretanje bota
 
@@ -136,6 +138,20 @@ Bot podržava sljedeće slash naredbe:
 | `/anketa info` | Prikazuje informacije o automatskim anketama |
 | `/anketa test` | Stvara test anketu u trenutnom kanalu (traje 1 minutu) |
 | `/anketa end` | Završava aktivnu anketu u trenutnom kanalu |
+| `/statistika prikaz` | Prikazuje statistiku dolazaka za korisnika koji koristi naredbu |
+| `/statistika reset` | Resetira statistiku dolazaka za sve korisnike (samo za administratore) |
+| `/statistika postavi` | Postavlja broj dolazaka za određenog korisnika (samo za administratore) |
+
+### Administratorske naredbe
+
+Naredbe koje zahtijevaju administratorske ovlasti:
+
+| Naredba | Opis | Parametri |
+|---------|------|-----------|
+| `/statistika reset` | Resetira statistiku dolazaka za sve korisnike | `potvrda`: boolean - zahtijeva eksplicitnu potvrdu |
+| `/statistika postavi` | Postavlja broj dolazaka za određenog korisnika | `korisnik`: user - korisnik kojem se postavlja broj dolazaka<br>`broj`: integer - broj dolazaka koji se postavlja |
+
+*Napomena: Za korištenje administratorskih naredbi, vaš Discord ID mora biti naveden u `adminUserIds` polju u `pollConfig.json` datoteci.*
 
 ## ❓ Rješavanje problema
 
@@ -161,6 +177,18 @@ node delete-commands.js
 3. **Ankete se ne stvaraju automatski**
    - Provjerite je li `pollChannelId` ispravan u `pollConfig.json`
    - Provjerite jesu li `pollDay` i `pollTime` ispravno postavljeni
+
+4. **Administratorske naredbe ne rade**
+   - Provjerite je li vaš Discord ID ispravno dodan u `adminUserIds` u `pollConfig.json`
+   - Pokrenite `node deploy-commands.js` nakon izmjene konfiguracije
+
+## 🆕 Zadnja ažuriranja
+
+### Verzija 1.2.0 (Trenutna)
+- Popravljeni problemi s brojačima na gumbima ankete
+- Spriječeno višestruko glasanje istim statusom
+- Dodane administratorske naredbe za upravljanje statistikom dolazaka
+- Implementirano praćenje trenutnog statusa korisnika za bolje korisničko iskustvo
 
 ---
 

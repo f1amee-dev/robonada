@@ -91,9 +91,57 @@ function getAllAttendanceStats() {
     });
 }
 
+// resetiranje statistike dolazaka za sve korisnike
+function resetAllAttendanceStats() {
+    return new Promise((resolve, reject) => {
+        db.run('DELETE FROM attendance_summary', [], (err) => {
+            if (err) {
+                console.error('[greška] neuspjelo brisanje tablice attendance_summary:', err);
+                reject(err);
+                return;
+            }
+            
+            // Možemo zadržati attendance_records tablicu za povijest ili ju izbrisati
+            // Ovdje je izbrisana za potpuni reset
+            db.run('DELETE FROM attendance_records', [], (err) => {
+                if (err) {
+                    console.error('[greška] neuspjelo brisanje tablice attendance_records:', err);
+                    reject(err);
+                    return;
+                }
+                console.log('[info] statistika dolazaka uspješno resetirana za sve korisnike');
+                resolve();
+            });
+        });
+    });
+}
+
+// postavljanje broja dolazaka za određenog korisnika
+function setUserAttendance(userId, username, attendanceCount) {
+    return new Promise((resolve, reject) => {
+        db.run(`
+            INSERT INTO attendance_summary (user_id, username, total_attendance, last_attended)
+            VALUES (?, ?, ?, CURRENT_TIMESTAMP)
+            ON CONFLICT(user_id) DO UPDATE SET
+            total_attendance = ?,
+            username = ?
+        `, [userId, username, attendanceCount, attendanceCount, username], (err) => {
+            if (err) {
+                console.error('[greška] neuspjelo postavljanje broja dolazaka:', err);
+                reject(err);
+                return;
+            }
+            console.log(`[info] broj dolazaka za korisnika ${username} (${userId}) postavljen na ${attendanceCount}`);
+            resolve();
+        });
+    });
+}
+
 module.exports = {
     initializeDatabase,
     recordAttendance,
     getAttendanceStats,
-    getAllAttendanceStats
+    getAllAttendanceStats,
+    resetAllAttendanceStats,
+    setUserAttendance
 }; 
