@@ -35,7 +35,7 @@ async function createAndHandlePoll(channel, client, isTest = false) {
   console.log(`[info] stvaranje ${isTest ? 'test' : 'zakazane'} ankete...`);
   const endTime = new Date(Date.now() + (isTest ? 60000 : 3600000));
   const pollEmbed = createPollEmbed([], [], endTime);
-  const buttons = createPollButtons();
+  const buttons = createPollButtons(0, 0, 0);
 
   try {
     // stvaranje spominjanja uloga ako su konfigurirane
@@ -57,6 +57,7 @@ async function createAndHandlePoll(channel, client, isTest = false) {
       notComing: [],
       maybe: [],
       votedUsers: new Set(),
+      userStatus: new Map(), // Novi Map za praćenje trenutnog statusa svakog korisnika
       isTest,
       endTime
     });
@@ -69,10 +70,13 @@ async function createAndHandlePoll(channel, client, isTest = false) {
         const poll = client.activePolls.get(sentMessage.id);
         if (poll) {
           const updatedEmbed = createPollEmbed(poll.coming, poll.notComing, poll.endTime, poll.maybe);
+          // Koristimo trenutne vrijednosti broja ljudi za gumbe
+          const updatedButtons = createPollButtons(poll.coming.length, poll.notComing.length, poll.maybe.length);
+          
           await sentMessage.edit({ 
             content: roleMentions,
             embeds: [updatedEmbed],
-            components: [buttons]
+            components: [updatedButtons], // Koristimo ažurirane gumbe s ispravnim brojačima
           });
         } else {
           // Ako anketa više ne postoji, očisti interval
@@ -169,6 +173,24 @@ async function handlePollButtonInteraction(interaction, poll, client) {
 
   // pohrana početnog stanja za određivanje je li ovo prvi glas ili promjena
   const isFirstVote = !poll.votedUsers.has(userId);
+  
+  // Inicijalizacija userStatus Mape ako ne postoji (za kompatibilnost s postojećim anketama)
+  if (!poll.userStatus) {
+    poll.userStatus = new Map();
+  }
+  
+  // Dohvaćamo trenutni status korisnika (ako postoji)
+  const currentStatus = poll.userStatus.get(userId);
+  const newStatus = interaction.customId;
+  
+  // Provjera pokušava li korisnik odabrati isti status
+  if (currentStatus === newStatus) {
+    await interaction.reply({
+      content: `Vec ste odabrali status "${newStatus === 'coming' ? 'Dolazim' : newStatus === 'not_coming' ? 'Ne dolazim' : 'Možda'}"!`,
+      ephemeral: true
+    });
+    return;
+  }
 
   let updated = false;
   // prvo uklanjanje iz svih lista
@@ -182,20 +204,33 @@ async function handlePollButtonInteraction(interaction, poll, client) {
     updated = true;
     console.log(`[info] korisnik ${userName} (${userId}) je glasao "dolazim".`);
     if (!poll.isTest) {
-      await db.recordAttendance(userId, userName, true);
+      // Bilježimo dolazak samo ako je promjena statusa
+      if (currentStatus !== 'coming') {
+        await db.recordAttendance(userId, userName, true);
+      }
     }
+    // Postavljanje trenutnog statusa korisnika
+    poll.userStatus.set(userId, 'coming');
   } else if (interaction.customId === 'not_coming') {
     poll.notComing.push(userName);
     updated = true;
     console.log(`[info] korisnik ${userName} (${userId}) je glasao "ne dolazim".`);
     if (!poll.isTest) {
-      await db.recordAttendance(userId, userName, false);
+      // Bilježimo nedolazak samo ako je promjena statusa
+      if (currentStatus !== 'not_coming') {
+        await db.recordAttendance(userId, userName, false);
+      }
     }
+    // Postavljanje trenutnog statusa korisnika
+    poll.userStatus.set(userId, 'not_coming');
   } else if (interaction.customId === 'maybe') {
     poll.maybe.push(userName);
     updated = true;
     console.log(`[info] korisnik ${userName} (${userId}) je glasao "možda".`);
     // Ne bilježimo prisutnost za "možda" jer nije jasno je li korisnik došao ili ne
+    
+    // Postavljanje trenutnog statusa korisnika
+    poll.userStatus.set(userId, 'maybe');
   }
 
   // dodavanje u glasače ako je ovo njihov prvi glas
