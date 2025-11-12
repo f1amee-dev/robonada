@@ -19,16 +19,6 @@ module.exports = {
             '`/anketa end` - Završava aktivnu anketu u trenutnom kanalu\n' +
             '`/statistika` - Prikazuje vašu statistiku prisutnosti'
         },
-        { 
-          name: '📁 Pohrana Datoteka',
-          value: 
-            '`/storage upload` - Učitavanje datoteke (max 10MB)\n' +
-            '`/storage url` - Učitavanje datoteke s URL-a\n' +
-            '`/storage download` - Preuzimanje datoteke pomoću ID-a\n' +
-            '`/storage list` - Popis vaših datoteka\n' +
-            '`/storage delete` - Brisanje datoteke pomoću ID-a'
-        },
-
         {
           name: '⚙️ Postavke Bota',
           value: 
@@ -52,14 +42,6 @@ module.exports = {
           value: 
             '• Praćenje osobne prisutnosti\n' +
             '• Automatsko bilježenje dolazaka'
-        },
-        {
-          name: '💾 Funkcije Pohrane',
-          value: 
-            '• Sigurno spremanje datoteka\n' +
-            '• Enkripcija svih datoteka\n' +
-            '• Preuzimanje kroz privatne poruke\n' +
-            '• Pregled i brisanje vlastitih datoteka'
         }
       )
       .setFooter({ 

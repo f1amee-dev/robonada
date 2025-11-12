@@ -62,9 +62,7 @@ Napravite datoteku `config.json` u glavnom direktoriju projekta sa sljedećim sa
 {
   "token": "TVOJ_BOT_TOKEN",
   "clientId": "ID_TVOJE_APLIKACIJE",
-  "guildId": "ID_TVOG_DISCORD_SERVERA",
-  "encryptionKey": "TVOJ_ENCRYPTION_KEY",
-  "storageChannelId": "MJENJA_SE"
+  "guildId": "ID_TVOG_DISCORD_SERVERA"
 }
 ```
 
