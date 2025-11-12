@@ -3,3 +3,4 @@ node_modules/
 attendance.db
 pollconfig.json
 attendance.db
+tests/

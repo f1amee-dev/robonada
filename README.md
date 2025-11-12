@@ -80,16 +80,22 @@ Možete stvoriti datoteku `pollConfig.json` u glavnom direktoriju za prilagodbu 
   "pollChannelId": "ID_KANALA_ZA_ANKETE",
   "pollDay": 4,
   "pollTime": "16:00",
+  "sessionEndTime": "18:00",
   "mentionRoles": ["ID_ULOGE1", "ID_ULOGE2"],
-  "adminUserIds": ["ID_ADMINISTRATORA_1", "ID_ADMINISTRATORA_2"]
+  "adminUserIds": ["ID_ADMINISTRATORA_1", "ID_ADMINISTRATORA_2"],
+  "timezone": "Europe/Zagreb"
 }
 ```
 
 *Napomene:*
 - `pollDay`: 0 = nedjelja, 1 = ponedjeljak, ..., 6 = subota
-- `pollTime`: format "HH:MM" u 24-satnom formatu
+- `pollTime`: format "HH:MM" u 24-satnom formatu; vrijeme početka radionice (npr. 17:00)
+- `sessionEndTime`: vrijeme završetka radionice; anketa će se ponovno otvoriti u tom trenutku i ostati aktivna do sljedećeg početka
 - `mentionRoles`: lista ID-ova uloga koje će bot spomenuti prilikom stvaranja ankete
 - `adminUserIds`: lista ID-ova korisnika koji imaju pristup administratorskim naredbama za statistiku
+- `timezone` *(opcionalno)*: npr. "Europe/Zagreb"; ako se izostavi koristi se zadana vremenska zona Europe/Zagreb
+
+Anketa ostaje otvorena punih 7 dana nakon završetka radionice. Kada radionica počne, anketa se automatski pauzira (gumbi se privremeno onemoguće) i šalje se poruka sa zahvalom. Nakon što radionica završi, ista se anketa ponovno otvara za sljedeći tjedan – sve se sinkronizira prema postavljenim vremenima.
 
 ## 🚀 Pokretanje bota
 

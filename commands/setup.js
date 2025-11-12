@@ -24,6 +24,11 @@ module.exports = {
         .setName('vrijeme')
         .setDescription('Vrijeme slanja ankete (HH:MM, 24-h format)')
         .setRequired(true))
+    .addStringOption(option =>
+      option
+        .setName('kraj')
+        .setDescription('Vrijeme završetka radionice (HH:MM, 24-h format)')
+        .setRequired(true))
     .addRoleOption(option =>
       option
         .setName('role1')
@@ -48,6 +53,7 @@ module.exports = {
       const channel = interaction.options.getChannel('kanal');
       const day = interaction.options.getInteger('dan');
       const time = interaction.options.getString('vrijeme');
+      const endTime = interaction.options.getString('kraj');
       
       // Get all roles that were provided
       const roles = [];
@@ -57,12 +63,31 @@ module.exports = {
       }
 
       // Validate time format
-      if (!/^([01]?[0-9]|2[0-3]):[0-5][0-9]$/.test(time)) {
+      const timeRegex = /^([01]?[0-9]|2[0-3]):[0-5][0-9]$/;
+      if (!timeRegex.test(time)) {
         const errorEmbed = new EmbedBuilder()
           .setColor(0xFF0000)
-          .setTitle('❌ Greška')
+          .setTitle('Greška')
           .setDescription('Nevažeći format vremena. Koristite HH:MM format (npr. 16:00)');
         
+        await interaction.editReply({ embeds: [errorEmbed] });
+        return;
+      }
+
+      if (!timeRegex.test(endTime)) {
+        const errorEmbed = new EmbedBuilder()
+          .setColor(0xFF0000)
+          .setTitle('Greška')
+          .setDescription('Nevažeći format završetka. Koristite HH:MM format (npr. 18:30)');
+        await interaction.editReply({ embeds: [errorEmbed] });
+        return;
+      }
+
+      if (time === endTime) {
+        const errorEmbed = new EmbedBuilder()
+          .setColor(0xFF0000)
+          .setTitle('Greška')
+          .setDescription('Vrijeme početka i završetka ne može biti isto.');
         await interaction.editReply({ embeds: [errorEmbed] });
         return;
       }
@@ -72,6 +97,7 @@ module.exports = {
         pollChannelId: channel.id,
         pollDay: day,
         pollTime: time,
+        sessionEndTime: endTime,
         mentionRoles: roles.map(role => role.id)
       };
 
@@ -85,12 +111,13 @@ module.exports = {
 
       const confirmationEmbed = new EmbedBuilder()
         .setColor(0x00FF00)
-        .setTitle('✅ Konfiguracija uspješno spremljena')
+        .setTitle('Konfiguracija uspješno spremljena')
         .setDescription('Postavke za automatske ankete su ažurirane.')
         .addFields(
           { name: 'Kanal', value: `<#${channel.id}>`, inline: true },
           { name: 'Dan', value: dayName, inline: true },
-          { name: 'Vrijeme', value: time, inline: true }
+          { name: 'Početak', value: time, inline: true },
+          { name: 'Kraj', value: endTime, inline: true }
         )
         .setTimestamp();
 
@@ -118,7 +145,7 @@ module.exports = {
         
         const logEmbed = new EmbedBuilder()
           .setColor(0x0099FF)
-          .setTitle('ℹ️ Informacija')
+          .setTitle('Informacija')
           .setDescription('Anketa naredba je ponovno pokrenuta s novim postavkama.');
         
         console.log('[INFO] Anketa command reinitialized with new settings');
@@ -130,7 +157,7 @@ module.exports = {
       
       const errorEmbed = new EmbedBuilder()
         .setColor(0xFF0000)
-        .setTitle('❌ Greška')
+        .setTitle('Greška')
         .setDescription('Došlo je do greške prilikom postavljanja konfiguracije. Pokušajte ponovno.')
         .addFields({
           name: 'Detalji greške',

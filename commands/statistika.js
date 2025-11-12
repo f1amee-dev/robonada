@@ -60,7 +60,7 @@ module.exports = {
         const stats = await db.getAttendanceStats(interaction.user.id);
         
         const statsEmbed = {
-          title: '📊 Vaša statistika prisutnosti 📊',
+          title: 'Vaša statistika prisutnosti',
           description: `Došli ste na robotiku **${stats.total_attendance || 0}** puta.`,
           color: parseInt('0099ff', 16),
           timestamp: new Date(),
@@ -70,7 +70,7 @@ module.exports = {
 
         if (stats.last_attended) {
           statsEmbed.fields.push({
-            name: '🕒 Zadnji put',
+            name: 'Zadnji put',
             value: `<t:${Math.floor(new Date(stats.last_attended).getTime() / 1000)}:D>`,
             inline: true
           });
@@ -95,7 +95,7 @@ module.exports = {
     // Provjera ima li korisnik ovlasti za korištenje naredbe
     if (!config.adminUserIds.includes(userId)) {
       return interaction.reply({
-        content: '❌ Nemate ovlasti za korištenje ove naredbe. Samo administratori bota mogu koristiti ovu naredbu.',
+        content: 'Nemate ovlasti za korištenje ove naredbe. Samo administratori bota mogu koristiti ovu naredbu.',
         ephemeral: true
       });
     }
@@ -105,7 +105,7 @@ module.exports = {
       const isConfirmed = interaction.options.getBoolean('potvrda');
       if (!isConfirmed) {
         return interaction.reply({
-          content: '❌ Morate potvrditi da želite resetirati statistiku tako da postavite opciju potvrde na "True".',
+          content: 'Morate potvrditi da želite resetirati statistiku tako da postavite opciju potvrde na "True".',
           ephemeral: true
         });
       }
@@ -114,10 +114,10 @@ module.exports = {
       await interaction.deferReply({ ephemeral: true });
       try {
         await db.resetAllAttendanceStats();
-        await interaction.editReply('✅ Statistika dolazaka uspješno resetirana za sve korisnike.');
+        await interaction.editReply('Statistika dolazaka je resetirana za sve korisnike.');
       } catch (error) {
         console.error('[greška] greška prilikom resetiranja statistike:', error);
-        await interaction.editReply('❌ Došlo je do greške prilikom resetiranja statistike.');
+        await interaction.editReply('Došlo je do greške prilikom resetiranja statistike.');
       }
     } else if (subcommand === 'postavi') {
       // Implementacija postavljanja broja dolazaka za korisnika
@@ -127,10 +127,10 @@ module.exports = {
       await interaction.deferReply({ ephemeral: true });
       try {
         await db.setUserAttendance(targetUser.id, targetUser.username, attendanceCount);
-        await interaction.editReply(`✅ Broj dolazaka za korisnika ${targetUser.username} postavljen na ${attendanceCount}.`);
+        await interaction.editReply(`Broj dolazaka za korisnika ${targetUser.username} postavljen je na ${attendanceCount}.`);
       } catch (error) {
         console.error('[greška] greška prilikom postavljanja broja dolazaka:', error);
-        await interaction.editReply('❌ Došlo je do greške prilikom postavljanja broja dolazaka.');
+        await interaction.editReply('Došlo je do greške prilikom postavljanja broja dolazaka.');
       }
     }
   }

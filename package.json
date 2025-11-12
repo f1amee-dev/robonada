@@ -5,7 +5,8 @@
   "main": "bot.js",
   "scripts": {
     "start": "node bot.js",
-    "deploy": "node deploy-commands.js"
+    "deploy": "node deploy-commands.js",
+    "test": "vitest run"
   },
   "dependencies": {
     "@discordjs/builders": "^1.10.1",
@@ -17,5 +18,8 @@
     "node-cron": "^3.0.3",
     "node-schedule": "^2.1.1",
     "sqlite3": "^5.1.7"
+  },
+  "devDependencies": {
+    "vitest": "^4.0.8"
   }
 }

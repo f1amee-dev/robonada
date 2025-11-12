@@ -5,21 +5,157 @@ const db = require('../database');
 const fs = require('fs');
 const path = require('path');
 
-let config = {}; 
+const DEFAULT_CONFIG = {
+  pollChannelId: null,
+  pollDay: 3,
+  pollTime: '17:00', // vrijeme početka radionice
+  sessionEndTime: '19:00', // vrijeme završetka radionice
+  mentionRoles: [],
+  timezone: 'Europe/Zagreb',
+};
+
+let config = { ...DEFAULT_CONFIG };
+let pollCronJobs = [];
+const DAY_NAMES = ['Nedjelja', 'Ponedjeljak', 'Utorak', 'Srijeda', 'Četvrtak', 'Petak', 'Subota'];
 
 // učitavanje konfiguracije
 function loadConfig() {
   const configPath = path.join(__dirname, '..', 'pollConfig.json');
   if (fs.existsSync(configPath)) {
     try {
-      config = JSON.parse(fs.readFileSync(configPath, 'utf8'));
+      const fileConfig = JSON.parse(fs.readFileSync(configPath, 'utf8'));
+      config = {
+        ...DEFAULT_CONFIG,
+        ...fileConfig,
+      };
+
+      if (!Array.isArray(config.mentionRoles)) {
+        config.mentionRoles = [];
+      }
+
       console.log('[info] učitana konfiguracija ankete:', config);
     } catch (error) {
       console.error('[greška] neuspjelo učitavanje konfiguracije ankete:', error);
+      config = { ...DEFAULT_CONFIG };
     }
   } else {
     console.log('[info] korištenje zadane konfiguracije ankete');
+    config = { ...DEFAULT_CONFIG };
   }
+}
+
+function parseTimeString(timeStr = '00:00') {
+  const [hours = 0, minutes = 0] = timeStr.split(':').map(Number);
+  return { hours, minutes };
+}
+
+function normalizeDay(day) {
+  if (day === undefined || day === null) {
+    return 0;
+  }
+  return day === 7 ? 0 : day;
+}
+
+function getSessionDay() {
+  return normalizeDay(config.pollDay);
+}
+
+function getSessionEndDay() {
+  const startMinutes = getMinutesFromTime(config.pollTime);
+  const endMinutes = getMinutesFromTime(config.sessionEndTime);
+  const offset = endMinutes >= startMinutes ? 0 : 1;
+  const normalized = (getSessionDay() + offset) % 7;
+  return normalized;
+}
+
+function getMinutesFromTime(timeStr = '00:00') {
+  const { hours, minutes } = parseTimeString(timeStr);
+  return hours * 60 + minutes;
+}
+
+function getMomentForOccurrence(day, timeStr, nowMoment, direction = 'next') {
+  const { hours, minutes } = parseTimeString(timeStr);
+  let target = nowMoment.clone().day(day).hour(hours).minute(minutes).second(0).millisecond(0);
+
+  if (direction === 'next' && target.isBefore(nowMoment)) {
+    target = target.add(7, 'days');
+  }
+
+  if (direction === 'previous' && target.isAfter(nowMoment)) {
+    target = target.subtract(7, 'days');
+  }
+
+  return target;
+}
+
+function getSessionEndFromStart(startMoment) {
+  const { hours, minutes } = parseTimeString(config.sessionEndTime);
+  let endMoment = startMoment.clone().hour(hours).minute(minutes).second(0).millisecond(0);
+  if (endMoment.isSameOrBefore(startMoment)) {
+    endMoment = endMoment.add(1, 'day');
+  }
+  return endMoment;
+}
+
+function getNextSessionStartMoment(nowMoment = moment.tz(config.timezone)) {
+  return getMomentForOccurrence(getSessionDay(), config.pollTime, nowMoment, 'next');
+}
+
+function getNextSessionStart(nowMoment = moment.tz(config.timezone)) {
+  return getNextSessionStartMoment(nowMoment).toDate();
+}
+
+function getPreviousSessionStartMoment(nowMoment = moment.tz(config.timezone)) {
+  return getMomentForOccurrence(getSessionDay(), config.pollTime, nowMoment, 'previous');
+}
+
+function getNextSessionEnd(nowMoment = moment.tz(config.timezone)) {
+  const previousStart = getPreviousSessionStartMoment(nowMoment);
+  const previousEnd = getSessionEndFromStart(previousStart);
+
+  if (nowMoment.isBefore(previousEnd)) {
+    return previousEnd.toDate();
+  }
+
+  const nextStart = getNextSessionStartMoment(nowMoment);
+  const nextEnd = getSessionEndFromStart(nextStart);
+  return nextEnd.toDate();
+}
+
+function isDuringSession(nowMoment = moment.tz(config.timezone)) {
+  const previousStart = getPreviousSessionStartMoment(nowMoment);
+  const sessionEnd = getSessionEndFromStart(previousStart);
+  return nowMoment.isSameOrAfter(previousStart) && nowMoment.isBefore(sessionEnd);
+}
+
+function getDayName(day) {
+  const normalized = normalizeDay(day);
+  return DAY_NAMES[normalized] || DAY_NAMES[0];
+}
+
+function formatDiscordTimestamp(date, style = 'F') {
+  if (!(date instanceof Date) || Number.isNaN(date.getTime())) {
+    return 'uskoro';
+  }
+  return `<t:${Math.floor(date.getTime() / 1000)}:${style}>`;
+}
+
+function formatTimeLeft(endTime) {
+  if (!(endTime instanceof Date)) {
+    return 'N/A';
+  }
+
+  const diffMs = Math.max(0, endTime.getTime() - Date.now());
+  const duration = moment.duration(diffMs);
+  const days = Math.floor(duration.asDays());
+  const hours = duration.hours();
+  const minutes = duration.minutes();
+
+  const parts = [];
+  if (days) parts.push(`${days}d`);
+  if (hours || days) parts.push(`${hours}h`);
+  parts.push(`${minutes}m`);
+  return parts.join(' ');
 }
 
 // pomoćna funkcija za stvaranje i upravljanje anketom
@@ -33,9 +169,13 @@ async function createAndHandlePoll(channel, client, isTest = false) {
   }
 
   console.log(`[info] stvaranje ${isTest ? 'test' : 'zakazane'} ankete...`);
-  const endTime = new Date(Date.now() + (isTest ? 60000 : 3600000));
-  const pollEmbed = createPollEmbed([], [], endTime);
-  const buttons = createPollButtons(0, 0, 0);
+  const isSessionActive = !isTest && isDuringSession(moment.tz(config.timezone));
+  const endTime = isTest ? new Date(Date.now() + 60000) : getNextSessionStart();
+  const pollEmbed = createPollEmbed([], [], endTime, [], {
+    isOpen: !isSessionActive || isTest,
+    resumeAt: isSessionActive ? getNextSessionEnd(moment.tz(config.timezone)) : null,
+  });
+  const buttons = createPollButtons(0, 0, 0, isSessionActive && !isTest);
 
   try {
     // stvaranje spominjanja uloga ako su konfigurirane
@@ -49,32 +189,27 @@ async function createAndHandlePoll(channel, client, isTest = false) {
       components: [buttons]
     });
 
-    // pohrana ankete u activePolls
-    client.activePolls.set(sentMessage.id, {
-      messageId: sentMessage.id,
-      channelId: channel.id,
-      coming: [],
-      notComing: [],
-      maybe: [],
-      votedUsers: new Set(),
-      userStatus: new Map(), // Novi Map za praćenje trenutnog statusa svakog korisnika
-      isTest,
-      endTime
-    });
-
-    console.log(`[info] anketa uspješno stvorena u kanalu ${channel.name} (${channel.id}).`);
-
-    // ažuriranje ankete svakih 15 sekundi za prikaz preostalog vremena
+    let errorCount = 0;
     const updateInterval = setInterval(async () => {
       try {
         const poll = client.activePolls.get(sentMessage.id);
         if (poll) {
-          const updatedEmbed = createPollEmbed(poll.coming, poll.notComing, poll.endTime, poll.maybe);
-          // Koristimo trenutne vrijednosti broja ljudi za gumbe
-          const updatedButtons = createPollButtons(poll.coming.length, poll.notComing.length, poll.maybe.length);
+          const updatedEmbed = createPollEmbed(
+            poll.coming,
+            poll.notComing,
+            poll.endTime,
+            poll.maybe,
+            { isOpen: poll.isOpen, resumeAt: poll.resumeAt }
+          );
+          const updatedButtons = createPollButtons(
+            poll.coming.length,
+            poll.notComing.length,
+            poll.maybe.length,
+            !poll.isOpen
+          );
           
           await sentMessage.edit({ 
-            content: roleMentions,
+            content: poll.roleMentions,
             embeds: [updatedEmbed],
             components: [updatedButtons], // Koristimo ažurirane gumbe s ispravnim brojačima
           });
@@ -92,47 +227,44 @@ async function createAndHandlePoll(channel, client, isTest = false) {
       }
     }, 15000);
 
-    // Brojač grešaka za interval
-    let errorCount = 0;
+    const pollData = {
+      messageId: sentMessage.id,
+      channelId: channel.id,
+      coming: [],
+      notComing: [],
+      maybe: [],
+      votedUsers: new Set(),
+      userStatus: new Map(),
+      isTest,
+      endTime,
+      isOpen: !isSessionActive || isTest,
+      resumeAt: isSessionActive ? getNextSessionEnd(moment.tz(config.timezone)) : null,
+      roleMentions,
+      updateInterval,
+    };
 
-    // automatsko brisanje ankete
-    const deleteTimeout = isTest ? 60000 : 3600000; // 1 minuta ili 1 sat
-    
-    setTimeout(async () => {
-      clearInterval(updateInterval);
-      try {
-        const poll = client.activePolls.get(sentMessage.id);
-        if (poll) {
-          const comingCount = poll.coming.length;
-          const logMessage = `${isTest ? '[test] ' : ''}Danas je **${comingCount}** ljudi došlo na robotiku.`;
-          
-          // Bilježenje prisutnosti se ne radi ovdje jer se već bilježi u handlePollButtonInteraction
-          
-          // dohvaćanje ukupne statistike prisutnosti i prikaz poruke
-          if (!isTest) {
-            const stats = await db.getAllAttendanceStats();
-            const topAttendees = stats.slice(0, 3).map(stat => 
-              `${stat.username}: ${stat.total_attendance} dolazaka`
-            ).join('\n');
+    client.activePolls.set(sentMessage.id, pollData);
 
-            const statsMessage = `${logMessage}\n\nNajaktivniji članovi:\n${topAttendees}`;
-            await channel.send(statsMessage);
-          } else {
+    console.log(`[info] anketa uspješno stvorena u kanalu ${channel.name} (${channel.id}).`);
+
+    if (isTest) {
+      setTimeout(async () => {
+        clearInterval(updateInterval);
+        try {
+          const poll = client.activePolls.get(sentMessage.id);
+          if (poll) {
+            const comingCount = poll.coming.length;
+            const logMessage = `${isTest ? '[test] ' : ''}Danas je **${comingCount}** ljudi došlo na robotiku.`;
+
             await channel.send(logMessage);
+            await sentMessage.delete();
+            client.activePolls.delete(sentMessage.id);
           }
-          
-          console.log(`[info] anketa završena: ${logMessage}`);
-
-          await sentMessage.delete();
-          client.activePolls.delete(sentMessage.id);
-          console.log(`[info] anketa u kanalu ${channel.name} (${channel.id}) uspješno obrisana.`);
+        } catch (error) {
+          console.error('[greška] greška prilikom automatskog brisanja test ankete:', error);
         }
-      } catch (error) {
-        console.error(`[greška] greška prilikom brisanja ankete u kanalu ${channel.name} (${channel.id}):`, error);
-        // Osiguraj da se anketa ukloni iz aktivnih anketa čak i ako dođe do greške
-        client.activePolls.delete(sentMessage.id);
-      }
-    }, deleteTimeout);
+      }, 60000);
+    }
 
     return sentMessage.id;
   } catch (error) {
@@ -164,12 +296,23 @@ async function endPoll(pollId, client) {
   
   await channel.send(logMessage);
   await message.delete();
+  if (poll.updateInterval) {
+    clearInterval(poll.updateInterval);
+  }
   client.activePolls.delete(pollId);
 }
 
 async function handlePollButtonInteraction(interaction, poll, client) {
   const userId = interaction.user.id;
   const userName = interaction.user.username;
+
+  if (!poll.isTest && poll.isOpen === false) {
+    await interaction.reply({
+      content: 'Anketa je trenutno pauzirana dok radionica traje. Vratite se nakon završetka.',
+      ephemeral: true,
+    });
+    return;
+  }
 
   // pohrana početnog stanja za određivanje je li ovo prvi glas ili promjena
   const isFirstVote = !poll.votedUsers.has(userId);
@@ -239,8 +382,19 @@ async function handlePollButtonInteraction(interaction, poll, client) {
   }
 
   if (updated) {
-    const updatedEmbed = createPollEmbed(poll.coming, poll.notComing, poll.endTime, poll.maybe);
-    const buttons = createPollButtons(poll.coming.length, poll.notComing.length, poll.maybe.length);
+    const updatedEmbed = createPollEmbed(
+      poll.coming,
+      poll.notComing,
+      poll.endTime,
+      poll.maybe,
+      { isOpen: poll.isOpen, resumeAt: poll.resumeAt }
+    );
+    const buttons = createPollButtons(
+      poll.coming.length,
+      poll.notComing.length,
+      poll.maybe.length,
+      !poll.isOpen
+    );
 
     await interaction.update({
       embeds: [updatedEmbed],
@@ -251,65 +405,304 @@ async function handlePollButtonInteraction(interaction, poll, client) {
   }
 }
 
-// ažuriranje createPollButtons za uključivanje brojača
-function createPollButtons(comingCount = 0, notComingCount = 0, maybeCount = 0) {
+function getManagedPoll(client) {
+  return Array.from(client.activePolls.values())
+    .find(p => p.channelId === config.pollChannelId && !p.isTest);
+}
+
+async function pausePollForSession(client, { silent = false } = {}) {
+  if (!config.pollChannelId) {
+    console.warn('[upozorenje] pollChannelId nije postavljen u konfiguraciji.');
+    return;
+  }
+
+  const poll = getManagedPoll(client);
+  if (!poll) {
+    console.log('[debug] nema aktivne ankete za pauziranje.');
+    return;
+  }
+
+  if (poll.isOpen === false) {
+    console.log('[debug] anketa je već pauzirana.');
+    return;
+  }
+
+  const channel = client.channels.cache.get(poll.channelId);
+  if (!channel) {
+    console.error('[greška] kanal nije pronađen za pauziranje ankete.');
+    return;
+  }
+
+  let message;
+  try {
+    message = await channel.messages.fetch(poll.messageId);
+  } catch (error) {
+    console.error('[greška] ne mogu dohvatiti poruku ankete za pauziranje:', error);
+    client.activePolls.delete(poll.messageId);
+    return;
+  }
+
+  const nowMoment = moment.tz(config.timezone);
+  const currentStart = getPreviousSessionStartMoment(nowMoment);
+  const resumeMoment = getSessionEndFromStart(currentStart);
+  const nextStartMoment = currentStart.clone().add(7, 'days');
+
+  poll.isOpen = false;
+  poll.resumeAt = resumeMoment.toDate();
+  poll.endTime = nextStartMoment.toDate();
+
+  const comingCount = poll.coming.length;
+  if (!silent) {
+    const logMessage = `Radionica je počela! Danas je prijavljeno **${comingCount}** dolazaka.`;
+    try {
+      const stats = await db.getAllAttendanceStats();
+      const topAttendees = stats.slice(0, 3).map(stat => `${stat.username}: ${stat.total_attendance} dolazaka`).join('\n') || 'Nema podataka.';
+      await channel.send(`${logMessage}\n\nNajaktivniji članovi:\n${topAttendees}`);
+    } catch (error) {
+      console.error('[greška] neuspjelo slanje statistike prilikom pauziranja ankete:', error);
+      await channel.send(logMessage);
+    }
+  }
+
+  const updatedEmbed = createPollEmbed(
+    poll.coming,
+    poll.notComing,
+    poll.endTime,
+    poll.maybe,
+    { isOpen: false, resumeAt: poll.resumeAt }
+  );
+  const buttons = createPollButtons(
+    poll.coming.length,
+    poll.notComing.length,
+    poll.maybe.length,
+    true
+  );
+
+  await message.edit({
+    content: poll.roleMentions,
+    embeds: [updatedEmbed],
+    components: [buttons],
+  });
+
+  console.log('[info] anketa je pauzirana za vrijeme radionice.');
+}
+
+async function resumePollForNextWeek(client, { notify = true } = {}) {
+  if (!config.pollChannelId) {
+    console.warn('[upozorenje] pollChannelId nije postavljen u konfiguraciji.');
+    return;
+  }
+
+  const channel = client.channels.cache.get(config.pollChannelId);
+  if (!channel) {
+    console.error('[greška] kanal nije pronađen za ponovno otvaranje ankete.');
+    return;
+  }
+
+  const poll = getManagedPoll(client);
+  if (!poll) {
+    console.log('[info] nema pronađene ankete - kreiram novu.');
+    await createAndHandlePoll(channel, client, false);
+    return;
+  }
+
+  let message;
+  try {
+    message = await channel.messages.fetch(poll.messageId);
+  } catch (error) {
+    console.error('[greška] ne mogu dohvatiti poruku ankete za ponovno otvaranje:', error);
+    client.activePolls.delete(poll.messageId);
+    await createAndHandlePoll(channel, client, false);
+    return;
+  }
+
+  poll.coming = [];
+  poll.notComing = [];
+  poll.maybe = [];
+  poll.votedUsers = new Set();
+  poll.userStatus = new Map();
+  poll.isOpen = true;
+  poll.resumeAt = null;
+  poll.endTime = getNextSessionStart(moment.tz(config.timezone));
+
+  const updatedEmbed = createPollEmbed([], [], poll.endTime, [], { isOpen: true });
+  const buttons = createPollButtons(0, 0, 0, false);
+
+  await message.edit({
+    content: poll.roleMentions,
+    embeds: [updatedEmbed],
+    components: [buttons],
+  });
+
+  if (notify) {
+    const mention = (poll.roleMentions || '').trim();
+    const infoMessage = `${mention ? mention + '\n' : ''}Anketa je ponovno otvorena! Prijavite dolazak za sljedeću radionicu.`;
+    await channel.send(infoMessage);
+  }
+
+  console.log('[info] anketa je ponovno otvorena za novi tjedan.');
+}
+
+function stopScheduledJobs() {
+  pollCronJobs.forEach(job => job.stop());
+  pollCronJobs = [];
+}
+
+function schedulePollCronJobs(client) {
+  stopScheduledJobs();
+
+  if (!config.pollChannelId) {
+    console.warn('[upozorenje] Nije moguće zakazati ankete bez postavljenog kanala.');
+    return;
+  }
+
+  const { hours: startHour, minutes: startMinute } = parseTimeString(config.pollTime);
+  const closeSchedule = `${startMinute} ${startHour} * * ${config.pollDay}`;
+  console.log(`[debug] zakazivanje pauziranja ankete: ${closeSchedule} (${config.timezone})`);
+
+  const closeJob = cron.schedule(closeSchedule, async () => {
+    console.log('[debug] cron posao (pauza ankete) pokrenut.');
+    try {
+      await pausePollForSession(client);
+    } catch (error) {
+      console.error('[greška] cron pauza ankete nije uspjela:', error);
+    }
+  }, { timezone: config.timezone });
+
+  pollCronJobs.push(closeJob);
+
+  const { hours: endHour, minutes: endMinute } = parseTimeString(config.sessionEndTime);
+  const endDay = getSessionEndDay();
+  const openSchedule = `${endMinute} ${endHour} * * ${endDay}`;
+  console.log(`[debug] zakazivanje ponovnog otvaranja ankete: ${openSchedule} (${config.timezone})`);
+
+  const openJob = cron.schedule(openSchedule, async () => {
+    console.log('[debug] cron posao (ponovno otvaranje) pokrenut.');
+    try {
+      await resumePollForNextWeek(client);
+    } catch (error) {
+      console.error('[greška] cron ponovno otvaranje ankete nije uspjelo:', error);
+    }
+  }, { timezone: config.timezone });
+
+  pollCronJobs.push(openJob);
+}
+
+async function ensurePollLifecycleState(client) {
+  if (!config.pollChannelId) {
+    return;
+  }
+
+  const channel = client.channels.cache.get(config.pollChannelId);
+  if (!channel) {
+    console.error('[greška] kanal definiran u konfiguraciji nije pronađen.');
+    return;
+  }
+
+  const nowMoment = moment.tz(config.timezone);
+  const poll = getManagedPoll(client);
+
+  if (isDuringSession(nowMoment)) {
+    if (poll && poll.isOpen) {
+      await pausePollForSession(client, { silent: true });
+    }
+  } else if (!poll) {
+    await createAndHandlePoll(channel, client, false);
+  } else if (!poll.isOpen) {
+    await resumePollForNextWeek(client, { notify: false });
+  }
+}
+
+// ažuriranje createPollButtons za uključivanje brojača i onemogućavanje tijekom radionice
+function createPollButtons(comingCount = 0, notComingCount = 0, maybeCount = 0, disabled = false) {
   return {
     type: 1,
     components: [
       {
         type: 2,
         custom_id: 'coming',
-        label: `✅ Dolazim! (${comingCount})`,
+        label: `✅ Dolazim (${comingCount})`,
         style: 3,
+        disabled,
       },
       {
         type: 2,
         custom_id: 'not_coming',
         label: `❌ Ne dolazim (${notComingCount})`,
         style: 4,
+        disabled,
       },
       {
         type: 2,
         custom_id: 'maybe',
         label: `❓ Možda (${maybeCount})`,
         style: 1,
+        disabled,
       },
     ],
   };
 }
 
 // Premješteno prije module.exports za bolju organizaciju koda
-function createPollEmbed(coming = [], notComing = [], endTime, maybe = []) {
+function createPollEmbed(coming = [], notComing = [], endTime, maybe = [], options = {}) {
   const comingList = coming.length > 0 ? coming.join('\n') : 'Nema';
   const notComingList = notComing.length > 0 ? notComing.join('\n') : 'Nema';
   const maybeList = maybe.length > 0 ? maybe.join('\n') : 'Nema';
-  
-  // izračun preostalog vremena
-  const now = new Date();
-  const timeLeft = endTime - now;
-  const minutesLeft = Math.max(0, Math.floor(timeLeft / 60000));
-  const secondsLeft = Math.max(0, Math.floor((timeLeft % 60000) / 1000));
-  const timeLeftString = `${minutesLeft}m ${secondsLeft}s`;
+
+  const { isOpen = true, resumeAt = null } = options;
+  const nextSessionTimestamp = formatDiscordTimestamp(endTime, 'F');
+  const resumeTimestamp = resumeAt ? formatDiscordTimestamp(resumeAt, 'F') : nextSessionTimestamp;
+  const timeLeftString = formatTimeLeft(endTime);
+
+  const statusValue = isOpen
+    ? `Anketa je otvorena do ${nextSessionTimestamp}.`
+    : `Radionica je u tijeku. Nastavljamo ${resumeTimestamp}.`;
 
   return {
-    title: 'Robotika danas ',
-    description:
-      'Dolazite li na robotiku danas?\n\n' +
-      'Kliknite gumb ispod kako biste označili svoj status.',
+    title: 'Robotika - tjedna anketa',
+    description: 'Recite mentorima dolazite li na sljedeću radionicu. Gumb možete kliknuti kad god promijenite mišljenje.',
     fields: [
-      { name: '⏰ Vrijeme', value: 'Robotika počinje u **17:00**', inline: true },
-      { name: '📅 Datum', value: `<t:${Math.floor(Date.now() / 1000)}:D>`, inline: true },
-      { name: '⌛ Preostalo vrijeme', value: timeLeftString, inline: true },
-      { name: '\u200B', value: '\u200B', inline: false },
+      { name: 'Sljedeća radionica', value: nextSessionTimestamp, inline: true },
+      { name: 'Početak', value: `${config.pollTime} (${getDayName(config.pollDay)})`, inline: true },
+      { name: 'Kraj', value: `${config.sessionEndTime}`, inline: true },
+      { name: 'Status', value: `${statusValue}\nPreostalo vrijeme: **${timeLeftString}**`, inline: false },
       { name: '✅ Dolazim', value: comingList, inline: true },
       { name: '❌ Ne dolazim', value: notComingList, inline: true },
       { name: '❓ Možda', value: maybeList, inline: true },
     ],
-    color: parseInt('0099ff', 16),
-    footer: { text: `Anketa se automatski briše za ${timeLeftString}` },
+    color: isOpen ? parseInt('00b894', 16) : parseInt('d63031', 16),
+    footer: { text: isOpen ? 'Anketa se privremeno pauzira kada radionica započne.' : 'Hvala svima koji su došli! Anketa se uskoro ponovno otvara.' },
     timestamp: new Date(),
   };
 }
+
+const testables = {
+  DEFAULT_CONFIG,
+  parseTimeString,
+  normalizeDay,
+  getSessionDay,
+  getSessionEndDay,
+  getMinutesFromTime,
+  getMomentForOccurrence,
+  getSessionEndFromStart,
+  getNextSessionStartMoment,
+  getNextSessionStart,
+  getPreviousSessionStartMoment,
+  getNextSessionEnd,
+  isDuringSession,
+  getDayName,
+  formatDiscordTimestamp,
+  formatTimeLeft,
+  createPollEmbed,
+  createPollButtons,
+  createAndHandlePoll,
+  pausePollForSession,
+  resumePollForNextWeek,
+  ensurePollLifecycleState,
+  getConfig: () => ({ ...config }),
+  setConfig: (overrides = {}) => { config = { ...config, ...overrides }; },
+  resetConfig: () => { config = { ...DEFAULT_CONFIG }; },
+};
 
 module.exports = {
   data: new SlashCommandBuilder()
@@ -329,27 +722,13 @@ module.exports = {
         .setDescription('Završava aktivnu anketu u trenutnom kanalu (samo za admine)')),
 
   init: (client) => {
-    console.log('[debug] inicijalizacija anketa naredbe i zakazivanje cron posla...');
-    
-    // učitavanje konfiguracije
+    console.log('[debug] inicijalizacija anketa naredbe i zakazivanje cron poslova...');
+
     loadConfig();
-    
-    // stvaranje cron rasporeda iz konfiguracije
-    const [hours, minutes] = config.pollTime.split(':');
-    const cronSchedule = `${minutes} ${hours} * * ${config.pollDay}`;
-    
-    console.log(`[debug] zakazivanje za ${config.pollDay} u ${config.pollTime}`);
-    cron.schedule(cronSchedule, async () => {
-      console.log('[debug] cron posao pokrenut u:', new Date().toLocaleString('hr-HR', { timeZone: 'Europe/Zagreb' }));
-      const channel = client.channels.cache.get(config.pollChannelId);
-      if (!channel) {
-        console.error('[greška] kanal nije pronađen.');
-        return;
-      }
-      await createAndHandlePoll(channel, client, false);
-    }, {
-      timezone: 'Europe/Zagreb',
-    });
+    schedulePollCronJobs(client);
+
+    ensurePollLifecycleState(client)
+      .catch(error => console.error('[greška] inicijalizacija stanja ankete nije uspjela:', error));
   },
 
   async execute(interaction) {
@@ -367,9 +746,9 @@ module.exports = {
       try {
         await interaction.deferReply();
         await createAndHandlePoll(interaction.channel, interaction.client, true);
-        await interaction.editReply('✅ Test anketa je stvorena.');
+        await interaction.editReply('Test anketa je stvorena.');
       } catch (error) {
-        await interaction.editReply(`❌ ${error.message}`);
+        await interaction.editReply(`Greška: ${error.message}`);
       }
       return;
     }
@@ -381,14 +760,14 @@ module.exports = {
           .find(p => p.channelId === interaction.channel.id);
         
         if (!poll) {
-          await interaction.editReply('❌ Nema aktivne ankete u ovom kanalu.');
+          await interaction.editReply('Nema aktivne ankete u ovom kanalu.');
           return;
         }
 
         await endPoll(poll.messageId, interaction.client);
-        await interaction.editReply('✅ Anketa je uspješno završena.');
+        await interaction.editReply('Anketa je uspješno završena.');
       } catch (error) {
-        await interaction.editReply(`❌ Greška: ${error.message}`);
+        await interaction.editReply(`Greška: ${error.message}`);
       }
       return;
     }
@@ -397,27 +776,33 @@ module.exports = {
     if (subcommand === 'info') {
       const infoEmbed = new EmbedBuilder()
         .setColor(0x0099FF)
-        .setTitle('ℹ️ Informacije o Anketama')
-        .setDescription('Dobrodošli u sustav za automatske ankete!')
+        .setTitle('Informacije o anketama')
+        .setDescription('Osnovne upute za automatske ankete.')
         .addFields(
           {
-            name: '📅 Automatske Ankete',
-            value: 'Ankete se automatski šalju prema konfiguriranom rasporedu.\nKoristite `/setup` za promjenu postavki.',
+            name: 'Automatske ankete',
+            value: [
+              'Otvorene su cijeli tjedan i pauziraju se tijekom radionice.',
+              'Koristi `/setup` za odabir kanala, dana i vremena.'
+            ].join('\n'),
             inline: false
           },
           {
-            name: '⏰ Trajanje',
-            value: 'Test ankete: 1 minuta\nRedovne ankete: 1 sat',
+            name: 'Trajanje',
+            value: [
+              'Test anketa traje 1 minutu.',
+              'Redovna anketa: otvorena 7 dana uz pauzu tijekom radionice.'
+            ].join('\n'),
             inline: true
           },
           {
-            name: '🔄 Ažuriranje',
-            value: 'Ankete se automatski ažuriraju svakih 15 sekundi',
+            name: 'Ažuriranje',
+            value: 'Brojevi se osvježavaju svakih 15 sekundi.',
             inline: true
           }
         )
         .setFooter({ 
-          text: 'Za dodatnu pomoć kontaktirajte filipa'
+          text: 'Za dodatnu pomoć kontaktirajte Filipa.'
         })
         .setTimestamp();
 
@@ -428,4 +813,5 @@ module.exports = {
   handlePollButtonInteraction,
   createPollButtons,
   createPollEmbed,
+  __testables: testables,
 };
